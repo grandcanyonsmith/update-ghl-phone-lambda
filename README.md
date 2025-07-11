@@ -9,13 +9,14 @@ This Lambda function performs a two-step update process:
 ### Step 1: Update Contact in Default Location
 - Updates the **contact** in the main/default location (`c2DjRsOo4e13Od6ZTU6S`)
 - This handles existing contacts that were created before the new subaccount
-- **NEW**: Automatically adds 'close' and 'closed' tags to all contacts
+- **NEW**: Automatically adds 'close' and 'closed' tags to all contacts (preserving existing tags)
+- **NEW**: Capitalizes first and last names properly (handles special cases like O'Connor, McDonald, Mary-Jane)
 - Tags are added even to contacts that already have phone numbers (if missing)
 
 ### Step 2: Update User in New Subaccount
 - Waits for and finds the new subaccount location created from the Stripe customer
 - Updates the **user** in that new subaccount with the phone number
-- Includes retry logic for up to 10 minutes to handle location creation delays
+- Includes retry logic to handle timing issues with new subaccount creation
 
 ## Authentication Flow
 
