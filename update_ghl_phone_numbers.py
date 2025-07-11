@@ -283,6 +283,19 @@ def lambda_handler(event, context):
                 # Prepare update payload
                 payload = {"phone": phone}
                 
+                # Capitalize first and last names
+                first_name = contact_data.get('firstName', '')
+                last_name = contact_data.get('lastName', '')
+                
+                if first_name:
+                    # Properly capitalize first name 
+                    # (handles names like O'Connor)
+                    payload['firstName'] = self.capitalize_name(first_name)
+                
+                if last_name:
+                    # Properly capitalize last name
+                    payload['lastName'] = self.capitalize_name(last_name)
+                
                 # Add tags if provided and not already present
                 if tags_to_add:
                     if isinstance(tags_to_add, list):
@@ -314,8 +327,8 @@ def lambda_handler(event, context):
                 )
                 if response.status_code == 200:
                     logger.info(
-                        f"Updated contact {contact_id} with phone {phone} "
-                        f"and tags"
+                        f"Updated contact {contact_id} with phone {phone}, "
+                        f"capitalized names, and tags"
                     )
                     return True
                 else:
@@ -327,6 +340,36 @@ def lambda_handler(event, context):
             except Exception as e:
                 logger.error(f"Error updating contact: {e}")
                 return False
+
+        def capitalize_name(self, name):
+            """
+            Properly capitalize a name, handling special cases like:
+            - O'Connor, O'Brien
+            - McDonald, MacArthur
+            - Hyphenated names: Mary-Jane
+            - Names with apostrophes: D'Angelo
+            """
+            if not name:
+                return name
+            
+            # Handle hyphenated names
+            if '-' in name:
+                parts = name.split('-')
+                return '-'.join([self.capitalize_name(part) for part in parts])
+            
+            # Handle apostrophes (O'Connor, D'Angelo)
+            if "'" in name:
+                parts = name.split("'")
+                return "'".join([part.capitalize() for part in parts])
+            
+            # Handle Mac/Mc prefixes
+            if name.lower().startswith('mc') and len(name) > 2:
+                return 'Mc' + name[2:].capitalize()
+            elif name.lower().startswith('mac') and len(name) > 3:
+                return 'Mac' + name[3:].capitalize()
+            
+            # Default capitalization
+            return name.capitalize()
 
         def update_contact_phone(
             self, contact_id, phone, location_access_token
