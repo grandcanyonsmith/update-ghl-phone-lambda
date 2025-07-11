@@ -252,24 +252,70 @@ def lambda_handler(event, context):
                 logger.error(f"Error searching contacts: {e}")
                 return []
 
-        def update_contact_phone(
-            self, contact_id, phone, location_access_token
+        def update_contact_phone_and_tags(
+            self, contact_id, phone, location_access_token,
+            tags_to_add=None
         ):
-            """Update contact phone number"""
-            url = f"https://services.leadconnectorhq.com/contacts/{contact_id}"
+            """Update contact phone and add tags if not already present"""
+            # First, get the contact to check existing tags
+            get_url = (
+                f"https://services.leadconnectorhq.com/contacts/{contact_id}"
+            )
             headers = {
                 "Authorization": f"Bearer {location_access_token}",
                 "Version": "2021-07-28",
-                "Content-Type": "application/json",
                 "Accept": "application/json"
             }
-            payload = {"phone": phone}
             
             try:
-                response = requests.put(url, headers=headers, json=payload)
+                # Get current contact data
+                get_response = requests.get(get_url, headers=headers)
+                if get_response.status_code != 200:
+                    logger.error(
+                        f"Failed to get contact: "
+                        f"{get_response.status_code} {get_response.text}"
+                    )
+                    return False
+                    
+                contact_data = get_response.json()
+                existing_tags = contact_data.get('tags', [])
+                
+                # Prepare update payload
+                payload = {"phone": phone}
+                
+                # Add tags if provided and not already present
+                if tags_to_add:
+                    if isinstance(tags_to_add, list):
+                        tags_to_add_list = tags_to_add
+                    else:
+                        tags_to_add_list = [tags_to_add]
+                    new_tags = []
+                    
+                    for tag in tags_to_add_list:
+                        if tag not in existing_tags:
+                            new_tags.append(tag)
+                    
+                    if new_tags:
+                        # Combine existing tags with new tags
+                        payload['tags'] = existing_tags + new_tags
+                        logger.info(
+                            f"Adding tags to contact {contact_id}: {new_tags}"
+                        )
+                
+                # Update contact
+                update_url = (
+                    f"https://services.leadconnectorhq.com/contacts/"
+                    f"{contact_id}"
+                )
+                headers["Content-Type"] = "application/json"
+                
+                response = requests.put(
+                    update_url, headers=headers, json=payload
+                )
                 if response.status_code == 200:
                     logger.info(
-                        f"Updated contact {contact_id} with phone {phone}"
+                        f"Updated contact {contact_id} with phone {phone} "
+                        f"and tags"
                     )
                     return True
                 else:
@@ -281,6 +327,14 @@ def lambda_handler(event, context):
             except Exception as e:
                 logger.error(f"Error updating contact: {e}")
                 return False
+
+        def update_contact_phone(
+            self, contact_id, phone, location_access_token
+        ):
+            """Update contact phone number"""
+            return self.update_contact_phone_and_tags(
+                contact_id, phone, location_access_token, tags_to_add=None
+            )
 
         def get_users_by_location(self, location_id, location_access_token):
             """Get all users for a location"""
@@ -423,6 +477,7 @@ def lambda_handler(event, context):
         )
         
         contacts_updated_default = 0
+        tags_added_default = 0
         if default_location_token:
             contacts = ghl_client.search_contacts_by_email(
                 DEFAULT_LOCATION_ID, customer_email, default_location_token
@@ -432,20 +487,41 @@ def lambda_handler(event, context):
             )
             
             for contact in contacts:
+                contact_id = contact.get('id')
+                existing_tags = contact.get('tags', [])
+                
                 if not contact.get('phone'):
-                    contact_id = contact.get('id')
-                    if ghl_client.update_contact_phone(
-                        contact_id, customer_phone, default_location_token
+                    # Update phone and add tags
+                    if ghl_client.update_contact_phone_and_tags(
+                        contact_id, customer_phone, default_location_token,
+                        tags_to_add=['close', 'closed']
                     ):
                         contacts_updated_default += 1
                         logger.info(
-                            f"Updated contact {contact_id} in default location"
+                            f"Updated contact {contact_id} in "
+                            f"default location with phone and tags"
                         )
                 else:
-                    logger.info(
-                        f"Contact {contact.get('id')} already has phone: "
-                        f"{contact.get('phone')}"
-                    )
+                    # Phone exists, check if we need to add tags
+                    needs_close = 'close' not in existing_tags
+                    needs_closed = 'closed' not in existing_tags
+                    
+                    if needs_close or needs_closed:
+                        if ghl_client.update_contact_phone_and_tags(
+                            contact_id, contact.get('phone'), 
+                            default_location_token,
+                            tags_to_add=['close', 'closed']
+                        ):
+                            tags_added_default += 1
+                            logger.info(
+                                f"Added tags to contact {contact_id} "
+                                f"in default location"
+                            )
+                    else:
+                        logger.info(
+                            f"Contact {contact.get('id')} already has "
+                            f"phone: {contact.get('phone')} and tags"
+                        )
         else:
             logger.error("Failed to get token for default location")
         
@@ -455,8 +531,10 @@ def lambda_handler(event, context):
             f"{stripe_customer_id}"
         )
         
-        new_location_ids = ghl_client.get_locations_by_stripe_customer_with_retry(
-            stripe_customer_id, stripe_subscription_id
+        new_location_ids = (
+            ghl_client.get_locations_by_stripe_customer_with_retry(
+                stripe_customer_id, stripe_subscription_id
+            )
         )
         
         total_users_updated = 0
@@ -507,7 +585,8 @@ def lambda_handler(event, context):
                 'message': 'Phone numbers updated successfully',
                 'default_location': {
                     'location_id': DEFAULT_LOCATION_ID,
-                    'contacts_updated': contacts_updated_default
+                    'contacts_updated': contacts_updated_default,
+                    'tags_added': tags_added_default
                 },
                 'new_subaccounts': {
                     'total_users_updated': total_users_updated,
